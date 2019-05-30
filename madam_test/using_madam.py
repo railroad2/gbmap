@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import healpy as hp
 import pylab as plt
@@ -10,7 +11,7 @@ from gbpipe.gbsim import sim_noise1f
 from gbpipe.utils import set_logger
 from scipy.interpolate import interp1d
 
-def set_parameters(nside, fsample, nsample):
+def set_parameters(nside, fsample, nsample, outpath):
     pars = {}
 
     pars['info'] = 0 
@@ -48,7 +49,7 @@ def set_parameters(nside, fsample, nsample):
     #pars['skip_existing'] = 
     pars['temperature_only'] = True
     #pars['force_pol'] = 
-    pars['noise_weights_from_psd'] = True
+    pars['noise_weights_from_psd'] = False
     #pars['radiometers'] = 
     #pars['psdlen'] = 
     #pars['psd_down'] = 
@@ -59,14 +60,15 @@ def set_parameters(nside, fsample, nsample):
     #pars['use_fprecond'] = 
     #pars['use_cgprecond'] = 
     #pars['rm_monopole'] = 
-    pars['path_output'] = '/home/klee_ext/kmlee/hpc_data/madam_test/'
+    #pars['path_output'] = '/home/klee_ext/kmlee/hpc_data/madam_test/'
+    pars['path_output'] = outpath 
     pars['file_root'] = 'madam_test'
 
     pars['write_map'] = True
     pars['write_binmap'] = True
     pars['write_hits'] = True
-    pars['write_matrix'] = True
-    pars['write_wcov'] = True
+    #pars['write_matrix'] = True
+    #pars['write_wcov'] = True
     pars['write_base'] = True
     pars['write_mask'] = True
     pars['write_leakmatrix'] = True 
@@ -98,16 +100,16 @@ def using_madam():
     log = set_logger()
 
     if itask == 0:
-        log.warning('Running with ', ntask, ' MPI tasks')
+        log.warning('Running with {} MPI tasks'.format(ntask))
 
     log.info('Calling Madam')
 
     nside = 64
     npix = hp.nside2npix(nside)
-    fsample = 100
-    dt = 600
+    fsample = 1000
+    dt = npix//fsample#600
     nnz = 1
-    nsample = fsample * dt
+    nsample = npix 
 
     pars = set_parameters(nside, fsample, nsample)
 
@@ -115,7 +117,7 @@ def using_madam():
     cl = np.zeros(shape=cl_length)
     cl[5] = 1
 
-    np.random.seed(0) 
+    np.random.seed(1) 
 
     dets =['det0']    
     ndet = len(dets)
@@ -134,7 +136,7 @@ def using_madam():
     #signal[:] = np.sin(2*np.pi*pixels/npix*2)*3
     #signal[:] += np.random.randn(nsample * ndet)
 
-    noisesim, (psdf, psdv) = sim_noise1f(nsample, 1, 1, fsample=fsample, alpha=1, rseed=0, return_psd=True)
+    noisesim, (psdf, psdv) = sim_noise1f(nsample, 1, 1, fsample=fsample, alpha=1, rseed=1, return_psd=True)
     noise  = np.zeros(ndet * nsample, dtype=madam.SIGNAL_TYPE)
     noise[:]  = noisesim
     psdf = psdf[:len(psdf)//2]
@@ -146,10 +148,10 @@ def using_madam():
 
     nperiod = 4
     periods = np.zeros(nperiod, dtype=int)
-    periods[0] = int(nsample*0)
-    periods[1] = int(nsample*0)
-    periods[2] = int(nsample*0)
-    periods[3] = int(nsample*0)
+    periods[0] = int(nsample*0.1)
+    periods[1] = int(nsample*0.25)
+    periods[2] = int(nsample*0.5)
+    periods[3] = int(nsample*0.75)
 
     npsd = np.ones(ndet, dtype=np.int64)
     npsdtot = np.sum(npsd)
@@ -160,7 +162,7 @@ def using_madam():
     psdfreqs[:] = psdf[:npsdbin]
     npsdval = npsdbin * npsdtot
     psdvals = np.ones(npsdval)
-    psdvals[:] = psdv[:npsdbin]
+    psdvals[:] = np.abs(psdv[:npsdbin])
 
     hmap = np.zeros(npix, dtype=int)
     bmap = np.zeros(npix, dtype=float)
@@ -196,13 +198,22 @@ def map_madam():
     nside = 64
     npix = hp.nside2npix(nside)
     fsample = 1000
-    dt = 600
+    dt = npix//fsample #600
     nnz = 1
     nsample = fsample * dt
 
-    pars = set_parameters(nside, fsample, nsample)
+    outpath_pre = './madam_test'
+    outpath = outpath_pre + ('_%03d/' % (0))
+    i = 0
+    while os.path.isdir(outpath):
+        i += 1
+        outpath = outpath_pre + ('_%03d/' % (i))
 
-    np.random.seed(0) 
+    os.mkdir(outpath)
+
+    pars = set_parameters(nside, fsample, nsample, outpath)
+
+    np.random.seed(1) 
 
     dets =['det0']    
     ndet = len(dets)
@@ -218,15 +229,15 @@ def map_madam():
     pixweights[:] = 1
 
     signal = np.zeros(ndet * nsample, dtype=madam.SIGNAL_TYPE)
-    #signal[:] = np.sin(2*np.pi*pixels/npix*2)*3
+    signal[:] = np.sin(2*np.pi*pixels/npix*2)*0.1
     #signal[:] += np.random.randn(nsample * ndet)
 
-    noisesim, (psdf, psdv) = sim_noise1f(nsample, 0.1, 1, fsample=fsample, alpha=1.2, rseed=0, return_psd=True)
+    noisesim, (psdf, psdv) = sim_noise1f(nsample, wnl=300e-6, fknee=1, fsample=fsample, alpha=1, rseed=5, return_psd=True)
     noise  = np.zeros(ndet * nsample, dtype=madam.SIGNAL_TYPE)
     noise[:]  = noisesim
     psdf = psdf[:len(psdf)//2]
     psdv = psdv[:len(psdv)//2]
-    plt.figure()
+    #plt.figure()
     plt.loglog(psdf, psdv)
     plt.figure()
     plt.plot(signal)
@@ -234,10 +245,12 @@ def map_madam():
 
     signal_in = signal + noise
 
-    nperiod = 10
+    nperiod = 4 
     periods = np.zeros(nperiod, dtype=int)
     for i in range(nperiod):
-        periods[i] = 10000*i#int(nsample*0.025)
+        periods[i] = int(nsample//nperiod*i)
+
+    print (periods)
 
     npsd = np.ones(ndet, dtype=np.int64)
     npsdtot = np.sum(npsd)
@@ -248,7 +261,7 @@ def map_madam():
     psdfreqs[:] = psdf[:npsdbin]
     npsdval = npsdbin * npsdtot
     psdvals = np.ones(npsdval)
-    psdvals[:] = psdv[:npsdbin]
+    psdvals[:] = np.abs(psdv[:npsdbin])
 
     hmap = np.zeros(npix, dtype=int)
     bmap = np.zeros(npix, dtype=float)
@@ -266,7 +279,38 @@ def map_madam():
     madam.destripe(comm, pars, dets, weights, timestamps, pixels, pixweights,
                    signal_in, periods, npsd, psdstarts, psdfreqs, psdvals)
 
+    
+    bm = hp.read_map(outpath+'madam_test_bmap.fits', nest=True)
+    dm = hp.read_map(outpath+'madam_test_map.fits', nest=True)
+    diff = dm-bm
+
+    hp.mollview(dm, title='Orignal map')
+    hp.mollview(bm, title='Destriped map')
+    hp.mollview(diff, title='Original - destriped')
+
+    bm = bm[:nsample]
+    dm = dm[:nsample]
+
+    plt.figure()
+    plt.plot(signal_in)
+    plt.plot(dm)
+    plt.plot(signal_in-dm)
+    plt.title('signal input - map')
+
+    plt.figure()
+    plt.plot(dm)
+    plt.plot(bm)
+    plt.plot(diff)
+    plt.title('original - destriped')
+
+    plt.figure()
+    plt.plot(signal_in)
+    plt.plot(diff)
+    plt.title('original - offsets')
+
+
     plt.show()
    
 if __name__=='__main__':
     map_madam()
+    #using_madam()
