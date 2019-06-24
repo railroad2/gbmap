@@ -1,13 +1,14 @@
 import os
 import numpy as np
 import healpy as hp
-import pylab as plt
+#import pylab as plt
 from progress.bar import Bar
 
 from astropy.io import fits
 
 from gbpipe import gbdir, gbparam
-
+from gbpipe.gbsim import sim_noise1f
+from gbpipe.utils import set_logger
 
 from mpi4py import MPI
 import libmadam_wrapper as madam
@@ -64,14 +65,6 @@ def read_noise(fname):
 
     #return pix, ix, iy 
     return ut, noise 
-
-
-def read_tod_sim(fsignal, ffg, fnoise):
-    ...
-
-
-def destriping():
-    ...
 
 
 def pixels_for_detector(module, pix_mod, ra, dec, psi, nside=1024):
@@ -188,7 +181,7 @@ def compare_with_org(Q, U, nside=1024):
 
 
 def test_singlefile():
-    fname = '/home/klee_ext/kmlee/hpc_data/2019-06-06_GBsim_1day_beam/2019-09-01/GBtod_cmb145/GBtod_cmb145_2019-09-01T00:00:00.000_2019-09-01T00:10:00.000.fits'
+    fname = '/home/klee_ext/kmlee/hpc_data/GBsim_1day_beam/2019-09-01/GBtod_cmb145/GBtod_cmb145_2019-09-01T00:00:00.000_2019-09-01T00:10:00.000.fits'
     module = 1
     pix_mod = 0
 
@@ -219,63 +212,21 @@ def test_singlefile():
     plt.show()
 
 
-def collect_1day_data():
-    path_signal = '/home/klee_ext/kmlee/hpc_data/2019-06-06_GBsim_1day_beam/2019-09-01/GBtod_cmb145'
-    path_noise = '/home/klee_ext/kmlee/hpc_data/2019-06-06_GBsim_1day_beam/2019-09-01/GBtod_noise'
-    flist_signal = os.listdir(path_signal) 
-    flist_noise = os.listdir(path_noise)
-    flist_signal.sort()
-    flist_noise.sort()
-    nfile = 200
-    flist_signal = flist_signal[:nfile]
-    flist_noise = flist_noise[:nfile]
-    
-    module = 1
-    pix_mod = 0
-    fsample = 1000
-
-    ra_tot = []
-    dec_tot = []
-    psi_tot = []
-    ix_tot = []
-    iy_tot = []
-    noise_tot = []
-
-    bar = Bar("Reading tod files", max=len(flist_signal))
-    for fs, fn in zip(flist_signal, flist_noise): 
-        fname_signal = os.path.join(path_signal, fs)
-        fname_noise = os.path.join(path_noise, fn) 
-        dat = read_tod(fname_signal, module, pix_mod)
-        ut, noise = read_noise(fname_noise)
-        ra, dec, psi, ix, iy, pix = dat
-        ra_tot = np.concatenate((ra_tot, ra))
-        dec_tot = np.concatenate((dec_tot, dec))
-        psi_tot = np.concatenate((psi_tot, psi))
-        ix_tot = np.concatenate((ix_tot, ix))
-        iy_tot = np.concatenate((iy_tot, iy))
-        noise_tot = np.concatenate((noise_tot, noise))
-        bar.next()
-
-    bar.finish()
-
-    np.savez('/home/klee_ext/kmlee/tod_mod1pix0', 
-        ra=ra_tot, dec=dec_tot, psi=psi_tot, ix=ix_tot, iy=iy_tot, noise=noise_tot)
-    
-    return
-
-
 def test_1day():
     module = 1
     pix_mod = 0
-    nside = 128
+    nside = 1024
     npix = hp.nside2npix(nside)
     fsample = 1000
-    length = 6000000
+    length = 86400000
+
+    log = set_logger()
 
     arr_map = [[] for i in range(npix)]
     psi_map = [[] for i in range(npix)]
 
-    dat = np.load('/home/klee_ext/kmlee/tod_mod1pix0.npz')
+    log.info('loading tod')
+    dat = np.load('/home/klee_ext/kmlee/pixel_tod/tod_mod1pix0.npz')
 
     ra = dat['ra'][:length]
     dec = dat['dec'][:length]
@@ -284,26 +235,45 @@ def test_1day():
     iy = dat['iy'][:length]
     noise = dat['noise'][:length]
     
-    signal = noise + ix - iy
-    baseline = calculate_baseline(signal, fsample*10)
-    signal = signal - baseline
+    log.info('generating noise')
+    noisesim, (psdf, psdv) = sim_noise1f(length, wnl=300e-1, fknee=1, fsample=fsample, alpha=1, rseed=0, return_psd=True)
+    signal = ix + iy + noisesim #ix - iy + noise
 
-    np.savez_compressed('/home/klee_ext/kmlee/tod_linear_samples6e5.dat', signal=signal, baseline=baseline)
+    
+    log.info('calculating baseline')
+    baseline = calculate_baseline(signal, 3000)
+
+    outpath_pre = '/home/klee_ext/kmlee/test_linefit/linefit'
+    outpath = outpath_pre + ('_%03d/' % (0))
+    i = 0
+    while os.path.isdir(outpath):
+        i += 1
+        outpath = outpath_pre + ('_%03d/' % (i))
+
+    os.mkdir(outpath)
+
+    np.savez_compressed(outpath + 'tod_linear', signal=signal, baseline=baseline)
+
+    signal = signal - baseline
+    log.info('collecting pixel data')
     collect_data_multi(ra, dec, psi, signal, module, pix_mod, arr_map, psi_map, nside=nside)
 
-    plt.plot(signal)
-    plt.plot(noise)
-    plt.plot(baseline)
+    #plt.plot(signal)
+    #plt.plot(noise)
+    #plt.plot(baseline)
 
     #npix = len(arr_map)
     pixs = np.arange(npix)#hp.query_disc(nside=nside, vec=hp.ang2vec(np.radians(90-28), 0), radius=np.radians(30))
 
     avg_map = np.zeros(npix)
     std_map = np.zeros(npix)
+
+    I_map = np.full(npix, hp.UNSEEN)
     Q_map = np.full(npix, hp.UNSEEN)
     U_map = np.full(npix, hp.UNSEEN)
 
-    bar = Bar("Making maps", max=len(pixs))
+    log.info('Making map')
+    bar = Bar("Making maps", max=100)
     for i in pixs: #range(npix):
         if len(arr_map[i]) > 1: 
             #print (i)
@@ -313,15 +283,25 @@ def test_1day():
 
             avg_map[i] = np.average(arr_map[i]) 
             std_map[i] = np.std(arr_map[i])
-        bar.next()
+
+        if not(i%(len(pixs)//100)):
+            bar.next()
 
     bar.finish()
+    log.info('Making map finished')
+    
 
-    hp.mollview(Q_map, min=-1.77987e-6, max=2.0722e-6)
-    hp.mollview(U_map, min=-2.1874e-6, max=1.96767e-6)
-    compare_with_org(Q_map, U_map, nside)
-    plt.show()
+    hp.write_map(outpath + 'IQU_linear.fits', (I_map, Q_map, U_map))
+
+    #hp.mollview(Q_map, min=-1.77987e-6, max=2.0722e-6)
+    #hp.mollview(U_map, min=-2.1874e-6, max=1.96767e-6)
+    #compare_with_org(Q_map, U_map, nside)
+    #plt.show()
+    log.info('The end')
+
+    return
 
 
 if __name__=='__main__':
     test_1day()
+
