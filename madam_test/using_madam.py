@@ -199,9 +199,13 @@ def map_madam():
     #pixweights[nsample*2:nsample*3] = np.sin(2*psi_obs) 
 
 
-    log.info('Generating noise')
-    noisesim, (psdf, psdv) = sim_noise1f(nsample, wnl=300e1, fknee=1, fsample=fsample, alpha=1, rseed=0, return_psd=True)
-    log.info('Generating noise finished')
+    log.info('loading noise')
+    dat = np.load('/home/klee_ext/kmlee/hpc_data/noise_ref/noise1f_1day_alpha1_fknee1.npz')
+    noisesim = dat['noisesim']
+    psdf = dat['psdf']
+    psdv = dat['psdv']
+    #noisesim, (psdf, psdv) = sim_noise1f(nsample, wnl=300e1, fknee=1, fsample=fsample, alpha=1, rseed=0, return_psd=True)
+
     noise_gen = np.zeros(ndet * nsample, dtype=madam.SIGNAL_TYPE)
     noise_gen[:] = noisesim
     psdf = psdf[:len(psdf)//2]
@@ -280,8 +284,8 @@ def pol_madam():
     module = 1
     pix_mod = 11 
     pix_mod1 = 7
-    length = 86400000
-    #length = 6000000
+    #length = 86400000
+    length = 6000000
 
     log.info('Loading tod')
     #dat = np.load('/home/klee_ext/kmlee/hpc_data/GBsim_1day_0_5deg/2019-09-01/pixel_tod/tod_mod1pix0.npz')
@@ -357,13 +361,10 @@ def pol_madam():
     pixweights[2::3] = np.sin(2*psi_obs) 
 
 
-    #log.info('Generating noise')
+    log.info('Generating noise psd.')
     noisesim, (psdf, psdv) = sim_noise1f(nsample, wnl=300e-6, fknee=1, 
                                 fsample=fsample, alpha=1, rseed=0, 
                                 return_psd=True)
-    #log.info('Generating noise finished')
-    #noise_gen = np.zeros(ndet * nsample, dtype=madam.SIGNAL_TYPE)
-    #noise_gen[:] = noisesim
     psdf = psdf[:len(psdf)//2]
     psdv = psdv[:len(psdv)//2]
 
@@ -403,64 +404,93 @@ def pol_madam():
     return
 
 
-def pol_madam_better():
+def pol_madam_v2(signaltype, pix_mod=[7,11], outdir=None):
+    # some lines to play with multiple files efficienly.
     comm = MPI.COMM_WORLD
     itask = comm.Get_rank()
     ntask = comm.Get_size()
 
-    log = set_logger()
+    log = set_logger(level='INFO')
 
     if itask == 0:
         log.warning('Running with {} MPI tasks'.format(ntask))
 
-
-    nside = 128
+    nside = 1024
     npix = hp.nside2npix(nside)
     fsample = 1000
     dt = npix // fsample #600
     nnz = 3
     nsample = fsample * dt
-    module = 1
-    pix_mod = 11 
-    pix_mod1 = 7
     length = 86400000
     #length = 6000000
 
+    module = 1
+    #pix_mod = [7, 11]#np.arange(23)#[7, 2, 11]
+
+    log.info('Using module {}, detector {}'.format(module, pix_mod))
     log.info('Loading tod')
-    #dat = np.load('/home/klee_ext/kmlee/hpc_data/GBsim_1day_0_5deg/2019-09-01/pixel_tod/tod_mod1pix0.npz')
-    dat = np.load('/home/klee_ext/kmlee/hpc_data/GBsim_toy/2019-09-01/pixel_tod/tod_mod1pix11.npz')
-    dat1 = np.load('/home/klee_ext/kmlee/hpc_data/GBsim_toy/2019-09-01/pixel_tod/tod_mod1pix7.npz')
-    #dat2 = np.load('/home/klee_ext/kmlee/hpc_data/GBsim_toy/2019-09-01/pixel_tod/tod_mod1pix12.npz')
-    #dat3 = np.load('/home/klee_ext/kmlee/hpc_data/GBsim_toy/2019-09-01/pixel_tod/tod_mod1pix15.npz')
+    inpath = '/home/klee_ext/kmlee/hpc_data/GBsim_toy/2019-09-01/pixel_tod/'
 
-    ra = dat['ra'][:length]
-    dec = dat['dec'][:length]
-    psi = dat['psi'][:length]
-    ix = dat['ix'][:length]
-    iy = dat['iy'][:length]
-    noise = dat['noise'][:length]
+    fnames = []
+    dets = []
 
-    ra1 = dat1['ra'][:length]
-    dec1 = dat1['dec'][:length]
-    psi1 = dat1['psi'][:length]
-    ix1 = dat1['ix'][:length]
-    iy1 = dat1['iy'][:length]
-    noise1 = dat1['noise'][:length]
+    for pix_idx in pix_mod:
+        dets.append('mod{}det{}'.format(module, pix_idx))
+        fnames.append('/home/klee_ext/kmlee/hpc_data/GBsim_toy/2019-09-01/pixel_tod/tod_mod{}pix{}.npz'.format(module, pix_idx))
+
+    ra = []
+    dec = []
+    psi_arr = []
+    ix_arr = []
+    iy_arr = []
+    noise_arr = []
+    ra_tmp = []
+    dec_tmp = []
+
+    for f in fnames:
+        log.debug('pixeltod: ' + f)
+        dat = np.load(f)
+
+        ra = dat['ra'][:length]
+        dec = dat['dec'][:length]
+
+        #if ra_tmp.all() != ra.all() or dec_tmp.all() != dec.all(): 
+        #    log.error('The sky directions are not consistent between the pixel tod.')
+        #    raise
+
+        psi_arr.append(dat['psi'][:length])
+        ix_arr.append(dat['ix'][:length])
+        iy_arr.append(dat['iy'][:length])
+        noise_arr.append(dat['noise'][:length])
+
+        #ra_tmp = ra.copy()
+        #dec_tmp = dec.copy()
+
+    #del(ra_tmp)
+    #del(dec_tmp)
 
     log.info('Calculating pointings')
-    nsample = len(ra) 
-    log.info('number of samples = {}'.format(nsample))
-    signal = ix #- iy
-    signal1 = ix1 #- iy1
-    pix_obs, psi_obs = pixels_for_detector(module, pix_mod, ra, dec, psi, nside)
-    pix_obs1, psi_obs1 = pixels_for_detector(module, pix_mod1, ra1, dec1, psi1, nside)
 
-    outpath_pre = '/home/klee_ext/kmlee/test_madam/madam'
-    outpath = outpath_pre + ('_%03d/' % (0))
-    i = 0
-    while os.path.isdir(outpath):
-        i += 1
-        outpath = outpath_pre + ('_%03d/' % (i))
+    nsample = len(ra) 
+
+    log.info('number of samples = {}'.format(nsample))
+
+    pix_obs_arr = []
+    psi_obs_arr = []
+    for det, psi in zip(pix_mod, psi_arr):
+        res = pixels_for_detector(module, det, ra, dec, psi, nside)
+        pix_obs_arr.append(res[0]) 
+        psi_obs_arr.append(res[1])
+
+    if outdir is None:
+        outpath_prefix = '/home/klee_ext/kmlee/test_madam/madam'
+        outpath = outpath_prefix + ('_%03d/' % (0))
+        i = 0
+        while os.path.isdir(outpath):
+            i += 1
+            outpath = outpath_prefix + ('_%03d/' % (i))
+    else:
+        outpath = '/home/klee_ext/kmlee/test_madam/' + outdir
 
     os.mkdir(outpath)
     log.info('Directory {} have been made.'.format(outpath))
@@ -470,26 +500,30 @@ def pol_madam_better():
 
     np.random.seed(1) 
 
-    dets =['det11', 'det7']    
     ndet = len(dets)
     weights = np.ones(ndet, dtype=float)
 
+    log.info('Generating time stamp')
     timestamps = np.zeros(nsample, dtype=madam.TIMESTAMP_TYPE)
     timestamps[:] = np.arange(nsample) + itask * nsample
 
     ## concatenate the arrays
-    signal = np.append(signal, signal1)
-    noise = np.append(noise, noise1)
-    pix_obs = np.append(pix_obs, pix_obs1)
-    psi_obs = np.append(psi_obs, psi_obs1)
 
-    del(signal1)
-    del(noise1)
-    del(pix_obs1)
-    del(psi_obs1)
+    signal_arr = ix_arr #- iy
+
+    signal = np.concatenate(signal_arr, axis=None)
+    noise = np.concatenate(noise_arr, axis=None)
+    pix_obs = np.concatenate(pix_obs_arr, axis=None)
+    psi_obs = np.concatenate(psi_obs_arr, axis=None)
+
+    #del(signal_arr)
+    #del(noise_arr)
+    #del(pix_obs_arr)
+    #del(psi_obs_arr)
 
     pixels = np.zeros(ndet * nsample, dtype=madam.PIXEL_TYPE)
     pixels[:] = pix_obs 
+    #del(pix_obs)
 
     pixweights = np.zeros(ndet * nsample * nnz, dtype=madam.WEIGHT_TYPE)
     #pixweights[:nsample] = 1 
@@ -498,21 +532,43 @@ def pol_madam_better():
     pixweights[::3] = 1
     pixweights[1::3] = np.cos(2*psi_obs)
     pixweights[2::3] = np.sin(2*psi_obs) 
+    #del(psi_obs)
 
 
-    #log.info('Generating noise')
-    noisesim, (psdf, psdv) = sim_noise1f(nsample, wnl=300e-6, fknee=1, 
-                                fsample=fsample, alpha=1, rseed=0, 
-                                return_psd=True)
-    #log.info('Generating noise finished')
-    #noise_gen = np.zeros(ndet * nsample, dtype=madam.SIGNAL_TYPE)
-    #noise_gen[:] = noisesim
+    log.info('loading noise')
+    dat = np.load('/home/klee_ext/kmlee/hpc_data/noise_ref/noise1f_1day_alpha1_fknee1.npz')
+    noisesim = dat['noisesim']
+    psdf = dat['psdf']
+    psdv = dat['psdv']
+    
+    #log.info('Generating noise psd')
+    #noisesim, (psdf, psdv) = sim_noise1f(nsample, wnl=300e-6, fknee=1, 
+    #                            fsample=fsample, alpha=1, rseed=0, 
+    #                            return_psd=True)
+
     psdf = psdf[:len(psdf)//2]
     psdv = psdv[:len(psdv)//2]
 
     np.savez_compressed(outpath+'tod_raw', signal=signal, noise=noise)
     ## defining signal
-    signal = signal + noise*1e11
+    if signaltype == 'signal_only':
+        signal = signal
+    elif signaltype == 'signal+1fnoise':
+        signal = signal+noise*1e11
+    elif signaltype == 'signal+wnoise':
+        noisesim, (psdf, psdv) = sim_noise1f(nsample, wnl=300e-6, fknee=0, 
+                                    fsample=fsample, alpha=1, rseed=0, 
+                                    return_psd=True)
+        signal = signal+np.concatenate([noisesim]*ndet)*1e11
+    elif signaltype == 'wnoise_only':
+        noisesim, (psdf, psdv) = sim_noise1f(nsample, wnl=300e-6, fknee=0, 
+                                    fsample=fsample, alpha=1, rseed=0, 
+                                    return_psd=True)
+        signal = np.concatenate([noisesim]*ndet)*1e11
+    elif signaltype == '1fnoise_only':
+        signal = noise*1e11
+    else:
+        signal = signal+noise*1e11
 
     signal_in = np.zeros(ndet * nsample, dtype=madam.SIGNAL_TYPE)
     signal_in[:] = signal 
@@ -523,31 +579,42 @@ def pol_madam_better():
     for i in range(nperiod):
         periods[i] = int(nsample//nperiod*i)
 
-    print (periods)
+    log.debug ('periods={}'.format(periods))
 
     npsd = np.ones(ndet, dtype=np.int64)
     npsdtot = np.sum(npsd)
 
     psdstarts = np.zeros(npsdtot)
-    npsdbin = len(psdf)
+    npsdbin = len(psdf) 
+    log.debug('npsdbin={}'.format(npsdbin))
     psdfreqs = np.arange(npsdbin) * fsample / npsdbin
     psdfreqs[:] = psdf[:npsdbin]
     npsdval = npsdbin * npsdtot
     psdvals = np.ones(npsdval)
-    psdvals[:] = np.append(np.abs(psdv[:npsdbin]),np.abs(psdv[:npsdbin]))
+
+    for i in range(npsdtot):
+        psdvals[i*npsdbin:(i+1)*npsdbin] = np.abs(psdv[:npsdbin])
     
     log.info('Calling Madam')
     madam.destripe(comm, pars, dets, weights, timestamps, pixels, pixweights,
                    signal_in, periods, npsd, psdstarts, psdfreqs, psdvals)
 
-    log.info('ascii tod to npz')
-    tod_ascii2fits(outpath, remove_asc=True)
+    #log.info('ascii tod to npz')
+    #tod_ascii2fits(outpath, remove_asc=True)
 
     return
 
+def main():
+    # test 2019-06-28
+    #pol_madam_v2('signal_only',    pix_mod=np.arange(23), outdir='2019-06-28_signal_only')
+    #pol_madam_v2('signal+1fnoise', pix_mod=np.arange(23), outdir='2019-06-28_signal+1fnoise')
+    pol_madam_v2('signal+wnoise',  pix_mod=np.arange(23), outdir='2019-06-28_signal+wnoise')
+    pol_madam_v2('wnoise_only',    pix_mod=np.arange(23), outdir='2019-06-28_wnoise_only')
+    pol_madam_v2('1fnoise_only',   pix_mod=np.arange(23), outdir='2019-06-28_1fnoise_only')
 
 if __name__=='__main__':
     #map_madam()
-    pol_madam()
+    #pol_madam()
+    main()
 
 
