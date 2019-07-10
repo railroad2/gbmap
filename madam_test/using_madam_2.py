@@ -412,9 +412,10 @@ def pol_madam_v2(
         signaltype, 
         pix_mod=[7,11], 
         nside=1024, 
-        observationtime=86400,
+        obstime=86400,
         inpath='/home/klee_ext/kmlee/hpc_data/GBsim_toy/2019-09-01/pixel_tod/',
         outdir=None, 
+        pars=None,
         savetod=False):
 
     # some lines to play with multiple files efficienly.
@@ -432,7 +433,7 @@ def pol_madam_v2(
     dt = npix // fsample #600
     nnz = 3
     nsample = fsample * dt
-    length = observationtime * fsample 
+    length = obstime * fsample 
     #length = 600 * fsample
 
     module = 1
@@ -506,8 +507,11 @@ def pol_madam_v2(
         os.mkdir(outpath)
         log.info('Directory {} have been made.'.format(outpath))
 
-    log.info('Setting parameter')
-    pars = set_parameters(nside, fsample, nsample, outpath)
+    if pars is None:
+        log.info('Setting parameter')
+        pars = set_parameters(nside, fsample, nsample, outpath)
+    else:
+        pars['path_output'] = outpath
 
     np.random.seed(1) 
 
@@ -643,8 +647,9 @@ def pol_madam_v2(
     madam.destripe(comm, pars, dets, weights, timestamps, pixels, pixweights,
                    signal_in, periods, npsd, psdstarts, psdfreqs, psdvals)
 
-    #log.info('ascii tod to npz')
-    #tod_ascii2fits(outpath, remove_asc=True)
+    if savetod:
+        log.info('ascii tod to npz')
+        tod_ascii2fits(outpath, remove_asc=True)
 
     return
 
@@ -653,9 +658,10 @@ def pol_madam_v2_toy(
         signaltype, 
         pix_mod=[7,11], 
         nside=1024, 
-        observationtime=86400,
+        obstime=86400,
         inpath='/home/klee_ext/kmlee/hpc_data/GBsim_toy/2019-09-01/pixel_tod/',
         outdir=None, 
+        pars=None,
         savetod=False):
 
     # some lines to play with multiple files efficienly.
@@ -673,7 +679,7 @@ def pol_madam_v2_toy(
     dt = npix // fsample #600
     nnz = 3
     nsample = fsample * dt
-    length = observationtime * fsample 
+    length = obstime * fsample 
     #length = 600 * fsample
 
     module = 1
@@ -747,8 +753,11 @@ def pol_madam_v2_toy(
         os.mkdir(outpath)
         log.info('Directory {} have been made.'.format(outpath))
 
-    log.info('Setting parameter')
-    pars = set_parameters(nside, fsample, nsample, outpath)
+    if pars is None:
+        log.info('Setting parameter')
+        pars = set_parameters(nside, fsample, nsample, outpath)
+    else:
+        pars['path_output'] = outpath
 
     np.random.seed(1) 
 
@@ -788,7 +797,7 @@ def pol_madam_v2_toy(
 
 
     #log.info('Generating noise psd')
-    #noisesim, (psdf, psdv) = sim_noise1f_old(nsample, wnl=300e-6, fknee=1, 
+    #noisesim, (psdf, psdv) = sim_noise1f(nsample, wnl=300e-6, fknee=1, 
     #                            fsample=fsample, alpha=1, rseed=0, 
     #                            return_psd=True)
 
@@ -884,8 +893,9 @@ def pol_madam_v2_toy(
     madam.destripe(comm, pars, dets, weights, timestamps, pixels, pixweights,
                    signal_in, periods, npsd, psdstarts, psdfreqs, psdvals)
 
-    #log.info('ascii tod to npz')
-    #tod_ascii2fits(outpath, remove_asc=True)
+    if savetod:
+        log.info('ascii tod to npz')
+        tod_ascii2fits(outpath, remove_asc=True)
 
     return
 
@@ -894,11 +904,27 @@ def main():
     try:
         # test 2019-06-28
         inpath='/home/klee_ext/kmlee/hpc_data/GBsim_toy/2019-09-01/pixel_tod/'
+        nside = 1024
+        fsample = 1000
+        obstime = 86400
+        nsample = obstime * fsample
+        pars = set_parameters(nside, fsample, nsample, "")
+
+        pars['noise_weights_from_psd'] = True
+        outpath = '2019-07-08_toy_signal+1f_psd'
+        pol_madam_v2_toy('1fnoise_only', pix_mod=[11,], inpath=inpath, nside=nside, obstime=obstime, 
+                     outdir=outpath, savetod=True, pars=pars)
+
+        pars['noise_weights_from_psd'] = False
+        outpath = '2019-07-08_toy_signal+1f_nopsd'
+        pol_madam_v2_toy('1fnoise_only', pix_mod=[11,], inpath=inpath, nside=nside, obstime=obstime, 
+                     outdir=outpath, savetod=True, pars=pars)
+
         #pol_madam_v2_toy('signal_only',    pix_mod=np.arange(23), inpath=inpath, outdir='2019-07-04_toy_signal_only')
-        pol_madam_v2_toy('signal+1fnoise', pix_mod=np.arange(23), inpath=inpath, outdir='2019-07-04_toy_signal+1fnoise')
-        pol_madam_v2_toy('signal+wnoise',  pix_mod=np.arange(23), inpath=inpath, outdir='2019-07-04_toy_signal+wnoise')
-        pol_madam_v2_toy('wnoise_only',    pix_mod=np.arange(23), inpath=inpath, outdir='2019-07-04_toy_wnoise_only')
-        pol_madam_v2_toy('1fnoise_only',   pix_mod=np.arange(23), inpath=inpath, outdir='2019-07-04_toy_1fnoise_only')
+        #pol_madam_v2_toy('signal+1fnoise', pix_mod=np.arange(23), inpath=inpath, outdir='2019-07-04_toy_signal+1fnoise')
+        #pol_madam_v2_toy('signal+wnoise',  pix_mod=np.arange(23), inpath=inpath, outdir='2019-07-04_toy_signal+wnoise')
+        #pol_madam_v2_toy('wnoise_only',    pix_mod=np.arange(23), inpath=inpath, outdir='2019-07-04_toy_wnoise_only')
+        #pol_madam_v2_toy('1fnoise_only',   pix_mod=np.arange(23), inpath=inpath, outdir='2019-07-04_toy_1fnoise_only')
 
         #inpath='/home/klee_ext/kmlee/hpc_data/GBsim_1day_0_5deg/2019-09-01/pixel_tod/'
         #pol_madam_v2('signal_only',    nside=128, pix_mod=np.arange(23), inpath=inpath, outdir='2019-07-04_gb_signal_only_new')
